@@ -1,0 +1,92 @@
+trigger:
+- none
+
+parameters:
+  - name: terraform_action
+    displayName: Terraform Plan - choose action
+    type: string
+    default: 'apply'
+    values:
+      - 'apply'
+      - 'destroy'
+
+variables:
+  - name: workingDirectory
+    value: "."
+  - name: serviceConnection
+    value: "${service_connection_name}"
+
+stages:
+- stage: validate
+  displayName: validate
+  jobs:
+    - job:
+      displayName: terraform validate
+      pool:
+        ${agent_pool_configuration}
+      steps:
+      - task: TerraformInstaller@0
+        displayName: Install Terraform
+        inputs:
+          terraformVersion: 'latest'
+      - pwsh: terraform fmt -check
+        displayName: terraform fmt
+        workingDirectory: $(workingDirectory)
+      - pwsh: terraform init -backend=false
+        displayName: terraform init
+        workingDirectory: $(workingDirectory)
+      - pwsh: terraform validate
+        displayName: terraform validate
+        workingDirectory: $(workingDirectory)
+- stage: plan
+  $${{ if eq(parameters.terraform_action, 'destroy') }}:
+    displayName: 'plan -destroy'
+  $${{ else }}:
+    displayName: 'plan'
+  dependsOn: validate
+  variables:
+    - group: ${variable_group_name}
+  jobs:
+    - deployment: plan
+      displayName: terraform plan
+      pool:
+        ${agent_pool_configuration}
+      environment: ${environment_name}
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Terraform Module
+            - task: TerraformInstaller@0
+              displayName: Install Terraform
+              inputs:
+                terraformVersion: 'latest'
+            - task: TerraformTaskV4@4
+              displayName: terraform init
+              inputs:
+                provider: 'azurerm'
+                command: 'init'
+                workingDirectory: '$(workingDirectory)'
+                backendServiceArm: '$(serviceConnection)'
+                backendAzureRmResourceGroupName: '$(BACKEND_AZURE_RESOURCE_GROUP_NAME)'
+                backendAzureRmStorageAccountName: '$(BACKEND_AZURE_STORAGE_ACCOUNT_NAME)'
+                backendAzureRmContainerName: '$(BACKEND_AZURE_STORAGE_ACCOUNT_CONTAINER_NAME)'
+                backendAzureRmKey: 'terraform.tfstate'
+                backendAzureRmUseEnvironmentVariablesForAuthentication: true
+                backendAzureRmUseEntraIdForAuthentication: true
+              env:
+                ARM_USE_AZUREAD: true
+            - task: TerraformTaskV4@4
+              displayName: terraform plan
+              inputs:
+                provider: 'azurerm'
+                command: 'plan'
+                workingDirectory: '$(workingDirectory)'
+                $${{ if eq(parameters.terraform_action, 'destroy') }}:
+                  commandOptions: '-destroy'
+                $${{ else }}:
+                  commandOptions: ''
+                environmentServiceNameAzureRM: '$(serviceConnection)'
+              env:
+                ARM_USE_AZUREAD: true
