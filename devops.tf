@@ -12,11 +12,14 @@ locals {
 
   environment_name = "prod"
 
+  agent_pool_name          = "terraform"
+  agent_pool_configuration = var.azure_devops_self_hosted_agents ? "name: ${local.agent_pool_name}" : "vmImage: ubuntu-latest"
+
   pipeline_templates = toset(var.azure_devops_create_pipeline ? fileset("${path.module}/pipelines", "terraform*.yamltpl") : [])
   pipelines          = toset([for template in local.pipeline_templates : trimsuffix(template, "tpl")])
   pipeline_template_vars = {
     variable_group_name      = var.azure_devops_variable_group_name
-    agent_pool_configuration = "vmImage: 'ubuntu-latest'"
+    agent_pool_configuration = local.agent_pool_configuration
     service_connection_name  = var.azure_devops_service_connection_name
     environment_name         = "prod"
   }
@@ -143,4 +146,27 @@ resource "azuredevops_git_repository_file" "terraform" {
   overwrite_on_create = false
 
   content = templatefile("${path.module}/files/${each.key}tpl", local.file_template_vars)
+}
+
+// Additional Azure DevOps resources if using private runners
+
+resource "azuredevops_agent_pool" "terraform" {
+  for_each       = local.self_hosted
+  name           = local.agent_pool_name
+  auto_provision = false
+  auto_update    = true
+}
+
+resource "azuredevops_agent_queue" "terraform" {
+  for_each      = local.self_hosted
+  project_id    = data.azuredevops_project.project.id
+  agent_pool_id = azuredevops_agent_pool.terraform[each.key].id
+}
+
+resource "azuredevops_pipeline_authorization" "terraform" {
+  for_each    = local.pipelines
+  project_id  = data.azuredevops_project.project.id
+  resource_id = azuredevops_agent_queue.terraform[join(",", local.self_hosted)].id
+  type        = "queue"
+  pipeline_id = azuredevops_build_definition.terraform[each.key].id
 }

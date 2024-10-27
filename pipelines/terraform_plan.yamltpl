@@ -25,7 +25,7 @@ stages:
       pool:
         ${agent_pool_configuration}
       steps:
-      - task: TerraformInstaller@0
+      - task: TerraformInstaller@1
         displayName: Install Terraform
         inputs:
           terraformVersion: 'latest'
@@ -58,7 +58,7 @@ stages:
             steps:
             - checkout: self
               displayName: Checkout Terraform Module
-            - task: TerraformInstaller@0
+            - task: TerraformInstaller@1
               displayName: Install Terraform
               inputs:
                 terraformVersion: 'latest'
