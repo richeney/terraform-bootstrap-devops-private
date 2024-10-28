@@ -88,15 +88,15 @@ resource "azuredevops_environment" "terraform" {
 }
 
 resource "azuredevops_git_repository_file" "pipeline" {
-  for_each = local.pipeline_templates
+  for_each = local.pipelines
 
   repository_id       = data.azuredevops_git_repository.repo.id
-  file                = "pipelines/${trimsuffix(each.key, "tpl")}"
+  file                = "pipelines/${each.key}"
   branch              = "refs/heads/main"
   commit_message      = "Initial commit"
   overwrite_on_create = true
 
-  content = templatefile("${path.module}/pipelines/${each.key}", local.pipeline_template_vars)
+  content = templatefile("${path.module}/pipelines/${each.key}tpl", local.pipeline_template_vars)
 }
 
 resource "azuredevops_build_definition" "terraform" {
@@ -164,7 +164,7 @@ resource "azuredevops_agent_queue" "terraform" {
 }
 
 resource "azuredevops_pipeline_authorization" "terraform" {
-  for_each    = local.pipelines
+  for_each    = toset(var.azure_devops_self_hosted_agents ? local.pipelines : [])
   project_id  = data.azuredevops_project.project.id
   resource_id = azuredevops_agent_queue.terraform[join(",", local.self_hosted)].id
   type        = "queue"
