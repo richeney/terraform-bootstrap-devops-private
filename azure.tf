@@ -259,12 +259,19 @@ resource "azurerm_container_group" "alz" {
     server   = azurerm_container_registry.acr["self_hosted"].login_server
   }
 
+  // Included pipelines uses OIDC for authentication.
+  // See <https://github.com/Azure-Samples/azure-devops-terraform-oidc-ci-cd/tree/main/pipelines>
+  // for a comparison between OIDC and managed identity authentication.
+  // OIDC is more secure and more flexible than managed identity authentication in this case.
+
+  /*
   identity {
     type = "UserAssigned"
     identity_ids = [
       azurerm_user_assigned_identity.terraform.id
     ]
   }
+  */
 
   container {
     name   = each.value
