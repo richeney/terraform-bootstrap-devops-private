@@ -95,11 +95,11 @@ variable "azure_devops_create_files" {
   default     = false
 }
 
-variable "azure_devops_self_hosted_agents" {
-  description = "Boolean to determine if self-hosted agents should be used."
-  type        = bool
-  default     = false
-}
+# variable "azure_devops_self_hosted_agents" {
+#   description = "Boolean to determine if self-hosted agents should be used."
+#   type        = bool
+#   default     = false
+# }
 
 variable "azure_devops_agents_token" {
   description = "Personal access token for Azure DevOps self-hosted agents (the token requires the 'Agent Pools - Read & Manage' scope and should have the maximum expiry)."
@@ -108,7 +108,7 @@ variable "azure_devops_agents_token" {
   default     = ""
 
   validation {
-    condition     = var.azure_devops_self_hosted_agents == false ? true : length(var.azure_devops_agents_token) > 0
+    condition     = length(var.azure_devops_agents_token) > 0
     error_message = "The azure_devops_agents_token must be a valid string."
   }
 }

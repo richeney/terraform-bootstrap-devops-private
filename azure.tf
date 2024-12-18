@@ -16,7 +16,6 @@ locals {
   uniq                    = substr(sha1(azurerm_resource_group.terraform.id), 0, 8)
   storage_account_name    = "terraformsa${local.uniq}"
   container_registry_name = "terraformacr${local.uniq}"
-  self_hosted             = toset(var.azure_devops_self_hosted_agents ? ["self_hosted"] : [])
 }
 
 resource "azurerm_resource_group" "terraform" {
@@ -35,7 +34,7 @@ resource "azurerm_storage_account" "terraform" {
   location            = azurerm_resource_group.terraform.location
   tags                = var.tags
 
-  # public_network_access_enabled = var.azure_devops_self_hosted_agents ? false : true
+  # public_network_access_enabled = false
   # need access to the storage account when running the initial bootstrap
   # will rework this to be more secure in the future
 
@@ -43,17 +42,15 @@ resource "azurerm_storage_account" "terraform" {
   account_kind             = "BlobStorage"
   account_replication_type = "GRS"
 
-  default_to_oauth_authentication = true
-  https_traffic_only_enabled      = true
-  min_tls_version                 = "TLS1_2"
+  default_to_oauth_authentication  = true
+  https_traffic_only_enabled       = true
+  min_tls_version                  = "TLS1_2"
+  cross_tenant_replication_enabled = false
 
-  dynamic "network_rules" {
-    for_each = local.self_hosted
-    content {
-      default_action = "Deny"
-      ip_rules       = [data.http.source_address.response_body]
-      bypass         = ["AzureServices"]
-    }
+  network_rules {
+    default_action = "Deny"
+    ip_rules       = [data.http.source_address.response_body]
+    bypass         = ["AzureServices"]
   }
 
   blob_properties {
@@ -106,16 +103,7 @@ resource "azurerm_role_assignment" "state" {
 
 // Additional resources for host pool
 
-resource "azurerm_virtual_network" "private" {
-  for_each            = local.self_hosted
-  name                = "terraform-vnet"
-  location            = azurerm_resource_group.terraform.location
-  resource_group_name = azurerm_resource_group.terraform.name
-  address_space       = ["10.0.0.0/24"]
-}
-
 resource "azurerm_public_ip" "private" {
-  for_each            = local.self_hosted
   name                = "terraform-pip"
   location            = azurerm_resource_group.terraform.location
   resource_group_name = azurerm_resource_group.terraform.name
@@ -124,7 +112,6 @@ resource "azurerm_public_ip" "private" {
 }
 
 resource "azurerm_nat_gateway" "private" {
-  for_each            = local.self_hosted
   name                = "terraform-natgw"
   location            = azurerm_resource_group.terraform.location
   resource_group_name = azurerm_resource_group.terraform.name
@@ -132,65 +119,73 @@ resource "azurerm_nat_gateway" "private" {
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "private" {
-  for_each             = local.self_hosted
-  nat_gateway_id       = azurerm_nat_gateway.private["self_hosted"].id
-  public_ip_address_id = azurerm_public_ip.private["self_hosted"].id
+  nat_gateway_id       = azurerm_nat_gateway.private.id
+  public_ip_address_id = azurerm_public_ip.private.id
 }
 
-resource "azurerm_subnet" "container_instances" {
-  for_each                          = local.self_hosted
-  name                              = "container_instances"
+resource "azurerm_subnet_nat_gateway_association" "agent_pool" {
+  subnet_id      = azurerm_subnet.agent_pool.id
+  nat_gateway_id = azurerm_nat_gateway.private.id
+}
+
+//===================================================================
+
+resource "azurerm_virtual_network" "private" {
+  name                = "terraform-vnet"
+  location            = azurerm_resource_group.terraform.location
+  resource_group_name = azurerm_resource_group.terraform.name
+  address_space       = ["10.0.0.0/24"]
+}
+
+resource "azurerm_subnet" "agent_pool" {
+  name                              = "agent_pool"
   resource_group_name               = azurerm_resource_group.terraform.name
-  virtual_network_name              = azurerm_virtual_network.private["self_hosted"].name
+  virtual_network_name              = azurerm_virtual_network.private.name
   address_prefixes                  = ["10.0.0.0/26"]
   default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"
 
   delegation {
-    name = "container_instance_delegation"
+    name = "Microsoft.App/environments"
     service_delegation {
-      name    = "Microsoft.ContainerInstance/containerGroups"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
+      name    = "Microsoft.App/environments"
     }
   }
+
 }
 
-resource "azurerm_subnet_nat_gateway_association" "container_instances" {
-  for_each       = local.self_hosted
-  subnet_id      = azurerm_subnet.container_instances["self_hosted"].id
-  nat_gateway_id = azurerm_nat_gateway.private["self_hosted"].id
-}
-
-resource "azurerm_subnet" "storage" {
-  for_each                          = local.self_hosted
-  name                              = "storage"
+resource "azurerm_subnet" "private_endpoints" {
+  name                              = "private_endpoints"
   resource_group_name               = azurerm_resource_group.terraform.name
-  virtual_network_name              = azurerm_virtual_network.private["self_hosted"].name
+  virtual_network_name              = azurerm_virtual_network.private.name
   address_prefixes                  = ["10.0.0.64/26"]
   default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"
 }
 
+//===================================================================
+
+
+
+
+
 resource "azurerm_private_dns_zone" "storage" {
-  for_each            = local.self_hosted
   name                = "privatelink.blob.core.windows.net"
   resource_group_name = azurerm_resource_group.terraform.name
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "storage" {
-  for_each              = local.self_hosted
   name                  = "storage_private_dns_zone_link"
   resource_group_name   = azurerm_resource_group.terraform.name
-  private_dns_zone_name = azurerm_private_dns_zone.storage["self_hosted"].name
-  virtual_network_id    = azurerm_virtual_network.private["self_hosted"].id
+  private_dns_zone_name = azurerm_private_dns_zone.storage.name
+  virtual_network_id    = azurerm_virtual_network.private.id
 }
 
 resource "azurerm_private_endpoint" "storage" {
-  for_each            = local.self_hosted
   name                = "${azurerm_storage_account.terraform.name}-pe"
   resource_group_name = azurerm_resource_group.terraform.name
   location            = azurerm_resource_group.terraform.location
-  subnet_id           = azurerm_subnet.storage["self_hosted"].id
+  subnet_id           = azurerm_subnet.private_endpoints.id
 
   custom_network_interface_name = "${azurerm_storage_account.terraform.name}-pe-nic"
 
@@ -203,12 +198,13 @@ resource "azurerm_private_endpoint" "storage" {
 
   private_dns_zone_group {
     name                 = "blob_storage"
-    private_dns_zone_ids = [azurerm_private_dns_zone.storage["self_hosted"].id]
+    private_dns_zone_ids = [azurerm_private_dns_zone.storage.id]
   }
 }
 
+//===================================================================
+
 resource "azurerm_container_registry" "acr" {
-  for_each            = local.self_hosted
   name                = local.container_registry_name
   resource_group_name = azurerm_resource_group.terraform.name
   location            = azurerm_resource_group.terraform.location
@@ -217,9 +213,8 @@ resource "azurerm_container_registry" "acr" {
 }
 
 resource "azurerm_container_registry_task" "acr_task" {
-  for_each              = local.self_hosted
   name                  = "agent-build"
-  container_registry_id = azurerm_container_registry.acr[each.key].id
+  container_registry_id = azurerm_container_registry.acr.id
 
   platform {
     os           = "Linux"
@@ -237,45 +232,45 @@ resource "azurerm_container_registry_task" "acr_task" {
 }
 
 resource "azurerm_container_registry_task_schedule_run_now" "run_now" {
-  for_each                   = local.self_hosted
-  container_registry_task_id = azurerm_container_registry_task.acr_task[each.key].id
+  container_registry_task_id = azurerm_container_registry_task.acr_task.id
 }
 
+//===================================================================
+
+/*
 resource "azurerm_container_group" "alz" {
-  for_each            = toset(var.azure_devops_self_hosted_agents ? ["agent-01"] : [])
+  for_each            = toset(["agent-01"])
   name                = each.value
   resource_group_name = azurerm_resource_group.terraform.name
   location            = azurerm_resource_group.terraform.location
   ip_address_type     = "Private"
   os_type             = "Linux"
-  subnet_ids          = [azurerm_subnet.container_instances["self_hosted"].id]
+  subnet_ids          = [azurerm_subnet.container_instances.id]
   depends_on = [
     azurerm_container_registry_task_schedule_run_now.run_now
   ]
 
   image_registry_credential {
-    username = azurerm_container_registry.acr["self_hosted"].admin_username
-    password = azurerm_container_registry.acr["self_hosted"].admin_password
-    server   = azurerm_container_registry.acr["self_hosted"].login_server
+    username = azurerm_container_registry.acr.admin_username
+    password = azurerm_container_registry.acr.admin_password
+    server   = azurerm_container_registry.acr.login_server
   }
 
-  // Included pipelines uses OIDC for authentication.
-  // See <https://github.com/Azure-Samples/azure-devops-terraform-oidc-ci-cd/tree/main/pipelines>
-  // for a comparison between OIDC and managed identity authentication.
-  // OIDC is more secure and more flexible than managed identity authentication in this case.
+  # Included pipelines uses OIDC for authentication.
+  # See <https://github.com/Azure-Samples/azure-devops-terraform-oidc-ci-cd/tree/main/pipelines>
+  # for a comparison between OIDC and managed identity authentication.
+  # OIDC is more secure and more flexible than managed identity authentication in this case.
 
-  /*
-  identity {
-    type = "UserAssigned"
-    identity_ids = [
-      azurerm_user_assigned_identity.terraform.id
-    ]
-  }
-  */
+  # identity {
+  #   type = "UserAssigned"
+  #   identity_ids = [
+  #     azurerm_user_assigned_identity.terraform.id
+  #   ]
+  # }
 
   container {
     name   = each.value
-    image  = "${azurerm_container_registry.acr["self_hosted"].login_server}/azp-agent:linux"
+    image  = "${azurerm_container_registry.acr.login_server}/azp-agent:linux"
     cpu    = 1
     memory = 4
 
@@ -295,3 +290,4 @@ resource "azurerm_container_group" "alz" {
     }
   }
 }
+*/

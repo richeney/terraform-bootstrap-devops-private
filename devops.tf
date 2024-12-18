@@ -12,8 +12,8 @@ locals {
 
   environment_name = "prod"
 
-  agent_pool_name          = "terraform"
-  agent_pool_configuration = var.azure_devops_self_hosted_agents ? "name: ${local.agent_pool_name}" : "vmImage: ubuntu-latest"
+  agent_pool_name          = "My Azure Container Apps"
+  agent_pool_configuration = "name: ${local.agent_pool_name}" // As opposed to "vmImage: ubuntu-latest"
 
   pipeline_templates = toset(var.azure_devops_create_pipeline ? fileset("${path.module}/pipelines", "terraform*.yamltpl") : [])
   pipelines          = toset([for template in local.pipeline_templates : trimsuffix(template, "tpl")])
@@ -32,7 +32,7 @@ locals {
 
 }
 
-resource "azuredevops_variable_group" "terraform" {
+resource "azuredevops_variable_group" "terraform_backend" {
   project_id   = data.azuredevops_project.project.id
   name         = var.azure_devops_variable_group_name
   description  = "Variables for the Terraform backend"
@@ -150,23 +150,21 @@ resource "azuredevops_git_repository_file" "terraform" {
 
 // Additional Azure DevOps resources if using private runners
 
-resource "azuredevops_agent_pool" "terraform" {
-  for_each       = local.self_hosted
+resource "azuredevops_agent_pool" "aca" {
   name           = local.agent_pool_name
   auto_provision = false
   auto_update    = true
 }
 
-resource "azuredevops_agent_queue" "terraform" {
-  for_each      = local.self_hosted
+resource "azuredevops_agent_queue" "queue" {
   project_id    = data.azuredevops_project.project.id
-  agent_pool_id = azuredevops_agent_pool.terraform[each.key].id
+  agent_pool_id = azuredevops_agent_pool.aca.id
 }
 
-resource "azuredevops_pipeline_authorization" "terraform" {
-  for_each    = toset(var.azure_devops_self_hosted_agents ? local.pipelines : [])
+resource "azuredevops_pipeline_authorization" "queue" {
+  for_each    = local.pipelines
   project_id  = data.azuredevops_project.project.id
-  resource_id = azuredevops_agent_queue.terraform[join(",", local.self_hosted)].id
+  resource_id = azuredevops_agent_queue.queue.id
   type        = "queue"
   pipeline_id = azuredevops_build_definition.terraform[each.key].id
 }

@@ -2,7 +2,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 3.71"
     }
     azuredevops = {
       source  = "microsoft/azuredevops"
@@ -26,11 +26,12 @@ provider "azurerm" {
 
   storage_use_azuread = true
 
-  resource_provider_registrations = "core"
+  # resource_provider_registrations = "core"
 
-  resource_providers_to_register = [
-    "Microsoft.KeyVault"
-  ]
+  # resource_providers_to_register = [
+  #   "Microsoft.KeyVault",
+  #   "Microsoft.App"
+  # ]
 }
 
 provider "azuredevops" {
